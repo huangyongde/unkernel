@@ -1,0 +1,48 @@
+name: Sync upstream and deploy
+on:
+  schedule:
+    - cron: '17 * * * *'
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: sync-upstream-render
+  cancel-in-progress: false
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Mirror upstream source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --branch main https://github.com/pithings/unkernel.git "$RUNNER_TEMP/upstream"
+          upstream_sha=$(git -C "$RUNNER_TEMP/upstream" rev-parse HEAD)
+          previous=$(cat .upstream-sync-revision 2>/dev/null || true)
+          if [ "$upstream_sha" != "$previous" ]; then
+            rsync -a --delete --exclude='/.git/' --exclude='/.github/workflows/' --exclude='/.upstream-sync-revision' "$RUNNER_TEMP/upstream/" "$GITHUB_WORKSPACE/"
+            echo "$upstream_sha" > .upstream-sync-revision
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git add -f -A
+            git commit -m "Sync source from pithings/unkernel $upstream_sha"
+            git push origin HEAD:main
+          fi
+      - name: Trigger Render if the deployed revision changed
+        shell: bash
+        env:
+          HOOK: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+        run: |
+          set -euo pipefail
+          current=$(git rev-parse HEAD)
+          last=$(git rev-parse --verify --quiet refs/tags/unkernel-render-triggered || true)
+          if [ "$current" != "$last" ]; then
+            test -n "$HOOK"
+            curl --fail --silent --show-error --retry 3 -X POST -o /dev/null "$HOOK"
+            git tag -f unkernel-render-triggered "$current"
+            git push --force origin refs/tags/unkernel-render-triggered
+          fi
