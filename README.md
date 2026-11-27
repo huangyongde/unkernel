@@ -288,6 +288,14 @@ well behind native.
 - No IPv6, no UDP beyond DHCP and DNS, no inbound network connections
   ([`vm.connect()`, `vm.fetch()`](#talk-over-vsock) and `--forward` reach
   guest servers over vsock instead).
+- Over `wispBackend()`, a guest's half-close (`shutdown(SHUT_WR)`) does
+  not reach the server, so a client that waits for the server to see
+  end of file before it answers hangs (`echo hi | nc HOST PORT` against
+  such a server, an HTTP/1.0 body without Content-Length). Names resolve
+  to placeholder addresses in 198.18.0.0/15: every name resolves, a bad
+  one fails at connect time, and one address stands for each name. Pass
+  `lookup` for real answers, or use a backend of your own
+  ([Add a network](#add-a-network)).
 - No hardware breakpoints or watchpoints: `gdb`'s watchpoints are
   software ones, which single-step the program.
 - Code that runs only a few times (a large program's startup, such as
@@ -339,15 +347,17 @@ disk (labelled `kwdata`) is attached: then each distro keeps them in
 ### Add a network
 
 ```js
-import { createKernel, directBackend, wispBackend, DEFAULT_WISP_SERVERS } from "unkernel";
+import { createKernel, directBackend, wispBackend } from "unkernel";
 
 await createKernel({ net: directBackend() });                       // Node: host sockets
-await createKernel({ net: wispBackend(DEFAULT_WISP_SERVERS) });     // anywhere: a Wisp proxy
+await createKernel({ net: wispBackend("wss://wisp.example/") });    // anywhere: your Wisp proxy
 ```
 
 Networking is off unless you pass `net`. Any object with `connect` and
 `lookup` methods can carry the guest's TCP and DNS, so you can write your
-own backend.
+own backend. Wisp carries no DNS and no half-close
+([Known limits](#-known-limits)); `wispBackend(servers, { lookup })` takes a
+resolver of your own, such as DNS over HTTPS, for real addresses.
 
 ### Add disks
 
